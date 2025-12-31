@@ -1,216 +1,320 @@
 import tkinter as tk
-import io
+from tkinter import messagebox, ttk
 import requests
-import Parser_sel as parser # Предполагается, что это ваш модуль парсинга
-import ttkbootstrap as btk
-from tkinter import ttk, messagebox
-from threading import Thread
-from PIL import Image, ImageTk, ImageFilter, ImageDraw, ImageFont # Добавим ImageFilter
-from ttkbootstrap.constants import *
 
-class AvitoParserGUI:
+BASE_URL = "http://127.0.0.1:8000"
+
+class MainApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Avito Parser")
-        self.root.geometry("850x600")
+        self.root.title("Биржа Просмотров")
+        self.root.geometry("600x700")
+        self.current_user = None
         
-        # Настройка темы
-        self.style = btk.Style(theme='darkly')
+        # Сразу скрываем главное окно и показываем окно входа
+        self.root.withdraw()
+        self.show_login_window()
+
+    # --- ОКНО ВХОДА ---
+    def show_login_window(self):
+        self.login_win = tk.Toplevel()
+        self.login_win.title("Авторизация")
+        self.login_win.geometry("300x250")
+        self.login_win.protocol("WM_DELETE_WINDOW", self.root.quit)
+
+        tk.Label(self.login_win, text="Логин:").pack(pady=5)
+        self.ent_login = tk.Entry(self.login_win)
+        self.ent_login.pack()
+
+        tk.Label(self.login_win, text="Пароль:").pack(pady=5)
+        self.ent_pass = tk.Entry(self.login_win, show="*")
+        self.ent_pass.pack()
+
+        tk.Button(self.login_win, text="Войти", command=self.process_login, bg="#d1e7ff").pack(pady=10)
+        tk.Button(self.login_win, text="Нет аккаунта? Регистрация", command=self.show_register_window, bd=0, fg="blue").pack()
+
+    def process_login(self):
+        u = self.ent_login.get()
+        p = self.ent_pass.get()
+        try:
+            r = requests.post(f"{BASE_URL}/login", json={"username": u, "password": p})
+            res = r.json()
+            if res.get("status") == "success":
+                self.current_user = res["user"]
+                self.login_win.destroy()
+                self.setup_main_ui() # Строим основной интерфейс
+                self.root.deiconify() # Показываем главное окно
+            else:
+                messagebox.showerror("Ошибка", res.get("message"))
+        except:
+            messagebox.showerror("Ошибка", "Сервер недоступен")
+
+    # --- ОКНО РЕГИСТРАЦИИ ---
+    def show_register_window(self):
+        reg_win = tk.Toplevel(self.login_win)
+        reg_win.title("Регистрация")
+        reg_win.geometry("300x300")
+        reg_win.grab_set()
+
+        tk.Label(reg_win, text="Придумайте логин:").pack(pady=2)
+        ent_u = tk.Entry(reg_win); ent_u.pack()
+
+        tk.Label(reg_win, text="Ваш Email:").pack(pady=2)
+        ent_e = tk.Entry(reg_win); ent_e.pack()
+
+        tk.Label(reg_win, text="Придумайте пароль:").pack(pady=2)
+        ent_p = tk.Entry(reg_win, show="*"); ent_p.pack()
+
+        def submit():
+            u = ent_u.get().strip()
+            e = ent_e.get().strip()
+            p = ent_p.get().strip()
+            
+            if not u or not e or not p:
+                messagebox.showwarning("Внимание", "Заполните все поля!")
+                return
+
+            data = {"username": u, "email": e, "password": p}
+            try:
+                r = requests.post(f"{BASE_URL}/register", json=data)
+                
+                if r.status_code == 200:
+                    res = r.json()
+                    messagebox.showinfo("Успех", "Регистрация завершена!")
+                    reg_win.destroy()
+                
+                elif r.status_code == 422:
+                    # Это ошибка валидации (неверный email)
+                    res = r.json()
+                    # Проверяем, есть ли в ошибке упоминание email
+                    detail = res.get("detail", [])
+                    if any("email" in str(d.get("loc")) for d in detail):
+                        messagebox.showerror("Ошибка", "Неверный формат почты! Пример: user@mail.com")
+                    else:
+                        messagebox.showerror("Ошибка", "Проверьте правильность введенных данных")
+                
+                elif r.status_code == 500:
+                    messagebox.showerror("Ошибка", "Ошибка на стороне сервера (проблема с bcrypt)")
+                
+                else:
+                    messagebox.showerror("Ошибка", f"Код ошибки: {r.status_code}")
+
+            except Exception as ex:
+                messagebox.showerror("Ошибка связи", f"Не удалось достучаться до сервера: {ex}")
+
+        tk.Button(reg_win, text="Зарегистрироваться", command=submit, bg="#e1ebe1").pack(pady=15)
+
+    # --- ОСНОВНОЙ ИНТЕРФЕЙС ---
+    def setup_main_ui(self):
+        # Очищаем root если там что-то было
+        for widget in self.root.winfo_children():
+            widget.destroy()
+
+        # Панель игрока
+        top = tk.Frame(self.root, pady=10)
+        top.pack(fill="x", padx=10)
         
-        self.create_widgets()
-
-    def create_widgets(self):
-        # Фрейм для управления (верхняя часть)
-        control_frame = btk.Frame(self.root, padding=10)
-        control_frame.pack(side="top", fill="x", padx=10, pady=10)
-
-        # Кнопка для открытия модального окна
-        # Используем шрифт темы для лучшей интеграции
-        add_button = btk.Button(control_frame, text="Создать новую заявку", command=self.open_modal_window, bootstyle="info")
-        add_button.pack(pady=10)
+        self.lbl_user = tk.Label(top, text=f"Пользователь: {self.current_user['username']}", font=("Arial", 10, "bold"))
+        self.lbl_user.pack(side="left")
         
-        # Фрейм-контейнер для карточек
-        # Используем Canvas с Scrollbar для возможности прокрутки карточек
-        self.canvas = btk.Canvas(self.root, background=self.root.cget('bg'))
-        self.scrollbar = btk.Scrollbar(self.root, orient="vertical", command=self.canvas.yview)
-        self.scrollable_frame = btk.Frame(self.canvas, padding=10)
+        self.lbl_balance = tk.Label(top, text=f"Баланс: {self.current_user['points']} 🪙", fg="green")
+        self.lbl_balance.pack(side="right")
 
-        self.scrollable_frame.bind(
-            "<Configure>",
-            lambda e: self.canvas.configure(
-                scrollregion=self.canvas.bbox("all")
-            )
+        # Кнопка Выхода
+        tk.Button(self.root, text="Выйти из аккаунта", command=self.logout).pack(pady=5)
+
+        # --- 3. СЕКЦИЯ СОЗДАНИЯ ЗАКАЗА ---
+        self.order_frame = tk.LabelFrame(root, text="Разместить новый заказ", padx=10, pady=10)
+        self.order_frame.pack(fill="x", padx=10, pady=5)
+
+        tk.Label(self.order_frame, text="Название:").grid(row=0, column=0, sticky="w")
+        self.order_title = tk.Entry(self.order_frame)
+        self.order_title.grid(row=0, column=1, sticky="we", padx=5, pady=2)
+
+        tk.Label(self.order_frame, text="URL ссылки:").grid(row=1, column=0, sticky="w")
+        self.order_url = tk.Entry(self.order_frame)
+        self.order_url.grid(row=1, column=1, sticky="we", padx=5, pady=2)
+        
+        self.order_frame.columnconfigure(1, weight=1)
+
+        self.btn_buy_trigger = tk.Button(
+            self.order_frame, 
+            text="Купить просмотры (Рассчитать стоимость)", 
+            command=self.open_buy_modal, 
+            # state="disabled",
+            bg="#d1e7ff"
         )
+        self.btn_buy_trigger.grid(row=2, columnspan=2, pady=10)
 
-        self.canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
-        self.canvas.configure(yscrollcommand=self.scrollbar.set)
+        # --- 4. ТАБЛИЦА ДОСТУПНЫХ ЗАДАЧ (ДЛЯ ЗАРАБОТКА) ---
+        self.task_frame = tk.LabelFrame(root, text="Доступные задачи (Заработок +5)", padx=10, pady=10)
+        self.task_frame.pack(fill="both", expand=True, padx=10, pady=5)
 
-        self.canvas.pack(side="left", fill="both", expand=True, padx=10, pady=10)
-        self.scrollbar.pack(side="right", fill="y")
+        self.task_list = ttk.Treeview(self.task_frame, columns=("ID", "Title"), show="headings", height=5)
+        self.task_list.heading("ID", text="ID")
+        self.task_list.heading("Title", text="Заголовок задания")
+        self.task_list.column("ID", width=50)
+        self.task_list.pack(fill="both", expand=True)
 
-        # Назначаем scrollable_frame для карточек
-        self.card_container = self.scrollable_frame
+        btn_box = tk.Frame(self.task_frame)
+        btn_box.pack(pady=5)
         
-        # Метка статуса внизу
-        self.status_label = btk.Label(self.root, text="Готов к работе", font=("-size 10"), bootstyle="secondary")
-        self.status_label.pack(side="bottom", fill="x", pady=5)
-
-    def open_modal_window(self):
-        # Создание модального окна
-        modal = btk.Toplevel(self.root)
-        modal.title("Новая заявка")
-        modal.transient(self.root)
-        modal.grab_set()
-        modal.focus_set()
-
-        # Позиционирование окна по центру
-        modal_width = 950
-        modal_height = 200
-        screen_width = self.root.winfo_screenwidth()
-        screen_height = self.root.winfo_screenheight()
-        x = (screen_width / 2) - (modal_width / 2)
-        y = (screen_height / 2) - (modal_height / 2)
-        modal.geometry(f'{modal_width}x{modal_height}+{int(x)}+{int(y)}')
+        self.refresh_btn = tk.Button(btn_box, text="Обновить список", command=self.load_tasks)
+        self.refresh_btn.pack(side="left", padx=5)
         
-        modal_frame = btk.Frame(modal, padding=20)
-        modal_frame.pack(expand=True, fill="both")
+        self.complete_btn = tk.Button(btn_box, text="ВЫПОЛНИТЬ ВЫБРАННУЮ", command=self.complete_task, bg="#fff3cd")
+        self.complete_btn.pack(side="left", padx=5)
+
+        # --- 5. ТАБЛИЦА ВСЕХ ЗАКАЗОВ В БД (ОБЩИЙ МОНИТОРИНГ) ---
+        self.db_frame = tk.LabelFrame(root, text="Все заказы в системе (Мониторинг)", padx=10, pady=10)
+        self.db_frame.pack(fill="x", padx=10, pady=5)
         
-        # Поле для ввода URL
-        btk.Label(modal_frame, text="URL объявления:", font="-size 11").grid(row=0, column=0, padx=5, pady=5, sticky="w")
-        url_entry = btk.Entry(modal_frame, width=90)
-        url_entry.grid(row=0, column=1, padx=5, pady=5)
-        url_entry.insert(0, "")
+        self.db_tree = ttk.Treeview(self.db_frame, columns=("ID", "Title", "URL"), show="headings", height=5)
+        self.db_tree.heading("ID", text="ID")
+        self.db_tree.heading("Title", text="Название")
+        self.db_tree.heading("URL", text="Ссылка")
+        self.db_tree.column("ID", width=40)
+        self.db_tree.pack(fill="both", expand=True)
 
-        # Поле для ввода имени автора
-        btk.Label(modal_frame, text="Имя автора:", font="-size 11").grid(row=1, column=0, padx=5, pady=5, sticky="w")
-        author_entry = btk.Entry(modal_frame, width=90)
-        author_entry.grid(row=1, column=1, padx=5, pady=5)
-        author_entry.insert(0, "Алексей")
+    # --- ЛОГИКА ---
 
-        # Кнопка "Создать"
-        create_button = btk.Button(modal_frame, text="Создать", command=lambda: self.start_parsing(url_entry.get(), author_entry.get(), modal), bootstyle="success")
-        create_button.grid(row=2, column=0, columnspan=2, pady=15)
+    def login(self):
+        user_id = self.user_id_entry.get()
+        try:
+            r = requests.get(f"{BASE_URL}/users/{user_id}")
+            if r.status_code == 200:
+                self.current_user = r.json()
+                self.update_ui_state("logged_in")
+                self.load_tasks()
+                self.load_db_orders()
+            else:
+                messagebox.showerror("Ошибка", "Пользователь не найден")
+        except:
+            messagebox.showerror("Ошибка", "Сервер не отвечает")
 
-    def start_parsing(self, url, author, modal):
-        if not url or not author:
-            messagebox.showwarning("Предупреждение", "Пожалуйста, заполните все поля.", parent=modal)
+    def logout(self):
+        self.current_user = None
+        self.update_ui_state("logged_out")
+        self.task_list.delete(*self.task_list.get_children())
+        self.db_tree.delete(*self.db_tree.get_children())
+
+    def update_ui_state(self, state):
+        if state == "logged_in":
+            self.status_label.config(text=f"Юзер: {self.current_user['username']}", fg="green")
+            self.balance_label.config(text=f"Баллы: {self.current_user['points']}")
+            self.login_btn.config(state="disabled")
+            self.logout_btn.config(state="normal")
+            self.btn_buy_trigger.config(state="normal")
+            self.refresh_btn.config(state="normal")
+            self.complete_btn.config(state="normal")
+        else:
+            self.status_label.config(text="Статус: Не авторизован", fg="red")
+            self.balance_label.config(text="Баллы: 0")
+            self.login_btn.config(state="normal")
+            self.logout_btn.config(state="disabled")
+            self.btn_buy_trigger.config(state="disabled")
+            self.refresh_btn.config(state="disabled")
+            self.complete_btn.config(state="disabled")
+
+    # --- МОДАЛЬНОЕ ОКНО С КАЛЬКУЛЯТОРОМ ---
+    def open_buy_modal(self):
+        title = self.order_title.get()
+        url = self.order_url.get()
+        if not title or not url:
+            messagebox.showwarning("Внимание", "Заполните Название и URL сначала!")
             return
 
-        modal.destroy()  # Закрываем модальное окно
+        modal = tk.Toplevel(self.root)
+        modal.title("Оформление заказа")
+        modal.geometry("350x250")
+        modal.grab_set()
 
-        self.set_status("Подождите, идёт парсинг...", "info")
+        tk.Label(modal, text="Сколько просмотров нужно?", font=("Arial", 10)).pack(pady=10)
         
-        # Запуск парсинга в отдельном потоке
-        Thread(target=self._run_parsing_thread, args=(url, author)).start()
+        ent_count = tk.Entry(modal, font=("Arial", 12), justify='center')
+        ent_count.pack(pady=5)
+        ent_count.insert(0, "10")
 
-    def _run_parsing_thread(self, url, author):
-        # Эта функция выполняется в отдельном потоке
-        try:
-            # Предполагается, что parser.parse_avito_page(url) возвращает dict
-            result = parser.parse_avito_page(url) 
-        except Exception as e:
-            # Обработка исключений, которые могут возникнуть в парсере
-            result = {"error": f"Ошибка парсинга: {e}"}
+        lbl_price = tk.Label(modal, text="Итоговая стоимость: 50 баллов", font=("Arial", 10, "bold"), fg="blue")
+        lbl_price.pack(pady=10)
 
-        # Планируем вызов функции обновления интерфейса в основном потоке
-        self.root.after(0, self.update_gui_with_result, result, author)
-
-    def update_gui_with_result(self, result, author):
-        # Эта функция выполняется в основном потоке GUI
-        if "error" in result:
-            self.set_status(f"❌ Ошибка: {result['error']}", "danger")
-            messagebox.showerror("Ошибка парсинга", f"Произошла ошибка: {result['error']}")
-        else:
-            self.create_item_card(result, author)
-            self.set_status("✅ Объявление успешно выложено!", "success")
-            
-    def create_item_card(self, data, author):
-        # Используем card_container, который теперь является self.scrollable_frame
-        card = btk.Frame(self.card_container, padding=10, bootstyle="secondary")
-        card.pack(fill="x", padx=5, pady=5)
-        
-        # Сохранение данных в карточке для возможности редактирования/удаления
-        card.data = data
-        card.author = author
-
-        # Левая часть: фото
-        photo_frame = btk.Frame(card)
-        photo_frame.pack(side="left", padx=10, pady=5)
-        
-        photo_url = data.get("photos", [None])[0]
-        
-        photo = None
-        if photo_url and photo_url != "Фото не найдены":
+        def recalc(event=None):
             try:
-                response = requests.get(photo_url, timeout=5) # Добавим таймаут
-                img_data = response.content
-                img = Image.open(io.BytesIO(img_data))
-                
-                # Используем Image.Resampling.LANCZOS для современных версий Pillow (или просто Image.LANCZOS)
-                img.thumbnail((150, 150), Image.LANCZOS) 
-                photo = ImageTk.PhotoImage(img)
-                
-            except Exception as e:
-                print(f"Не удалось загрузить фото: {e}")
-                photo_url = None # Установим в None, чтобы показать заглушку
+                val = ent_count.get()
+                count = int(val) if val else 0
+                lbl_price.config(text=f"Итоговая стоимость: {count * 5} баллов", fg="blue")
+            except:
+                lbl_price.config(text="Введите число!", fg="red")
 
-        if photo:
-            photo_label = btk.Label(photo_frame, image=photo, bootstyle="inverse-light")
-            photo_label.image = photo  # Важно сохранить ссылку
-            photo_label.pack()
-        else:
-            # Заглушка, если фото не найдено
-            photo_label = btk.Label(photo_frame, text="Фото\nне найдено", width=15, height=10, bootstyle="warning")
-            photo_label.pack()
+        ent_count.bind("<KeyRelease>", recalc)
 
-        # Правая часть: текст и кнопки
-        info_frame = btk.Frame(card)
-        info_frame.pack(side="left", padx=10, pady=5, expand=True, fill="x")
+        def confirm_purchase():
+            try:
+                count = int(ent_count.get())
+                self.send_order_to_server(title, url, count, modal)
+            except:
+                messagebox.showerror("Ошибка", "Некорректное число")
 
-        # Заголовок
-        title_label = btk.Label(info_frame, text=data.get("title", "Нет заголовка"), font="-size 14 -weight bold", bootstyle="inverse-light", wraplength=400)
-        title_label.pack(anchor="w", pady=2)
-        
-        # Автор
-        author_label = btk.Label(info_frame, text=f"Автор: {author}", font="-size 12", bootstyle="inverse-light")
-        author_label.pack(anchor="w", pady=2)
-        
-        # Добавим цену и город
-        price_text = data.get("price", "Цена не указана")
-        location_text = data.get("location", "Город не указан")
-        btk.Label(info_frame, text=f"Цена: {price_text} | Город: {location_text}", font="-size 10", bootstyle="inverse-light").pack(anchor="w", pady=2)
+        tk.Button(modal, text="Оплатить и запустить", command=confirm_purchase, bg="#d1e7ff", padx=10).pack(pady=10)
 
-        # Кнопки для разработчика
-        buttons_frame = btk.Frame(card)
-        buttons_frame.pack(side="right", padx=10, pady=5)
-        
-        # Кнопка "Изменить"
-        edit_button = btk.Button(buttons_frame, text="✎", width=3, command=lambda c=card: self.edit_card(c), bootstyle="primary")
-        edit_button.pack(side="top", pady=5)
-        
-        # Кнопка "Удалить"
-        delete_button = btk.Button(buttons_frame, text="✖", width=3, command=lambda c=card: self.delete_card(c), bootstyle="danger")
-        delete_button.pack(side="top", pady=5)
-        
-        # Обновление области прокрутки после добавления новой карточки
-        self.root.after(100, lambda: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
+    def send_order_to_server(self, title, url, count, modal_window):
+        payload = {
+            "user_id": self.current_user["id"],
+            "title": title,
+            "target_url": url,
+            "views_count": count
+        }
+        try:
+            r = requests.post(f"{BASE_URL}/orders/create", json=payload)
+            res = r.json()
+            if res.get("status") == "success":
+                messagebox.showinfo("Успех", res["message"])
+                modal_window.destroy()
+                self.login() # Обновить баллы
+                self.load_db_orders()
+            else:
+                messagebox.showerror("Ошибка", res.get("message"))
+        except:
+            messagebox.showerror("Ошибка", "Нет связи с сервером")
 
+    # --- ЗАГРУЗКА ДАННЫХ ---
+    def load_tasks(self):
+        self.task_list.delete(*self.task_list.get_children())
+        try:
+            r = requests.get(f"{BASE_URL}/tasks/available/{self.current_user['id']}")
+            for t in r.json():
+                self.task_list.insert("", "end", values=(t["id"], t["title"]))
+        except: pass
 
-    def set_status(self, text, style):
-        # Используем метод config для изменения стиля
-        self.status_label.config(text=text, bootstyle=style) 
+    def load_db_orders(self):
+        self.db_tree.delete(*self.db_tree.get_children())
+        try:
+            r = requests.get(f"{BASE_URL}/orders/all")
+            for o in r.json():
+                self.db_tree.insert("", "end", values=(o["id"], o["title"], o["target_url"]))
+        except: pass
+
+    def complete_task(self):
+        sel = self.task_list.selection()
+        if not sel: return
+        t_id = self.task_list.item(sel[0])["values"][0]
         
-    def edit_card(self, card):
-        messagebox.showinfo("Изменить", f"Функционал 'Изменить' пока не реализован.\nДанные: {card.data['title']}", parent=self.root)
-        
-    def delete_card(self, card):
-        if messagebox.askyesno("Удалить", f"Вы уверены, что хотите удалить карточку '{card.data.get('title', 'Нет заголовка')}'?", parent=self.root):
-            card.destroy()
-            self.set_status("Карточка удалена.", "warning")
-            # Обновление области прокрутки после удаления
-            self.root.after(100, lambda: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
+        try:
+            r = requests.post(f"{BASE_URL}/tasks/complete", json={"user_id": self.current_user["id"], "order_id": t_id})
+            res = r.json()
+            if res.get("status") == "success":
+                messagebox.showinfo("Готово", "+5 баллов!")
+                self.login()
+            else:
+                messagebox.showerror("Упс", res.get("message"))
+        except: pass
+
+    def logout(self):
+        self.current_user = None
+        self.root.withdraw()
+        self.show_login_window()
 
 if __name__ == "__main__":
-    root = btk.Window(themename="darkly") 
-    app = AvitoParserGUI(root)
+    root = tk.Tk()
+    app = MainApp(root)
     root.mainloop()
